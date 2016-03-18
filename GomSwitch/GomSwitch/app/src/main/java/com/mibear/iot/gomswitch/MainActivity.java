@@ -7,6 +7,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Calendar;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
@@ -38,15 +39,20 @@ public class MainActivity extends AppCompatActivity {
     //
     protected final static String LOG = "mibear";
 
-    // -----------------------------------------------------------------------
     //
-    // -----------------------------------------------------------------------
+    protected final static int INTERVAL_STATE = 10000;
 
     //
     protected final static int CMD_BTON      =  1;
     protected final static int CMD_BTSETTING =  2;
     protected final static int CMD_START     = 11;
     protected final static int CMD_RESTART   = 12;
+    protected final static int CMD_GETSTATE  = 21;
+
+
+    // -----------------------------------------------------------------------
+    //
+    // -----------------------------------------------------------------------
 
     //
     protected Context mContext = null;
@@ -294,6 +300,10 @@ public class MainActivity extends AppCompatActivity {
     // -----------------------------------------------------------------------
 
     protected void mlHandle( Message msg ) {
+        if( msg.what < CMD_START ) {
+            if( mMbHd == null ) { return; }
+        }
+
         switch( msg.what ) {
             case MbBluetooth.ST_CONNECT: {
                 Log.d( LOG, "connect !!!" );
@@ -327,8 +337,12 @@ public class MainActivity extends AppCompatActivity {
 
                 switch( res.mCmd ) {
                     case MbHandler.CMD_CONNECT: {
-                        mlWait( "정보를 읽어 오고 있습니다", null );
-                        mMbHd.getState();
+                        mlWait( "시간설정 중입니다.", null );
+                        mMbHd.setDateTime();
+                        mHandler.sendMessage( mHandler.obtainMessage( CMD_GETSTATE ) );
+                        break;
+                    }
+                    case MbHandler.CMD_DATETIME: {
                         break;
                     }
                     case MbHandler.CMD_STATE: {
@@ -345,6 +359,13 @@ public class MainActivity extends AppCompatActivity {
                 startDevice( selectDevice() );
                 break;
             }
+            case CMD_GETSTATE: {
+                if( mMbHd != null ) {
+                    mMbHd.getState();
+                }
+                mHandler.sendMessageDelayed( mHandler.obtainMessage( CMD_GETSTATE ), INTERVAL_STATE );
+                break;
+            }
         }
     }
 
@@ -356,9 +377,11 @@ public class MainActivity extends AppCompatActivity {
     public static class MbHandler {
 
         //
-        public final static int CMD_STATE   =  1;
-        public final static int CMD_SWTICH  =  2;
-        public final static int CMD_CONNECT = 10;
+        public final static int CMD_STATE    =  1;
+        public final static int CMD_SWTICH   =  2;
+        public final static int CMD_DATETIME =  3;
+        public final static int CMD_SCHEDULE =  4;
+        public final static int CMD_CONNECT  = 10;
 
         //
         protected MbBluetooth mBt = null;
@@ -398,12 +421,50 @@ public class MainActivity extends AppCompatActivity {
             return mBt.mlCommand( json.toString() );
         }
 
+        public boolean setDateTime() {
+            Calendar date = Calendar.getInstance();
+            String st = String.format( "%04d%02d%02d%02d%02d%02d",
+                date.get( Calendar.YEAR ), date.get( Calendar.MONTH ) + 1, date.get( Calendar.DAY_OF_MONTH ),
+                date.get( Calendar.HOUR_OF_DAY ), date.get( Calendar.MINUTE ), date.get( Calendar.SECOND ) );
+
+            JSONObject json = new JSONObject();
+            try {
+                json.put( "cmd", "datetime" );
+                json.put( "seq", mSeq );
+                json.put( "datetime", st );
+                updateSeq();
+            } catch( JSONException e ) { return false; }
+            return mBt.mlCommand( json.toString() );
+        }
+
         public boolean setSwitch( boolean v ) {
             JSONObject json = new JSONObject();
             try {
                 json.put( "cmd", "switch" );
                 json.put( "seq", mSeq );
                 json.put( "state", ( v ? 1 : 0 ) );
+                updateSeq();
+            } catch( JSONException e ) { return false; }
+            return mBt.mlCommand( json.toString() );
+        }
+
+        public boolean setSchTime( int timemask ) {
+            JSONObject json = new JSONObject();
+            try {
+                json.put( "cmd", "schedule" );
+                json.put( "seq", mSeq );
+                json.put( "timemask", timemask & 0xFFFFFFFF );
+                updateSeq();
+            } catch( JSONException e ) { return false; }
+            return mBt.mlCommand( json.toString() );
+        }
+
+        public boolean getSchTime() {
+            JSONObject json = new JSONObject();
+            try {
+                json.put( "cmd", "schedule" );
+                json.put( "seq", mSeq );
+                json.put( "timemask", 0xFFFFFFFF );
                 updateSeq();
             } catch( JSONException e ) { return false; }
             return mBt.mlCommand( json.toString() );
@@ -423,6 +484,13 @@ public class MainActivity extends AppCompatActivity {
                     res.mCmd = CMD_SWTICH;
                     res.mInfo1 = json.getInt( "state" );
                 }
+                else if( cmd.equals( "datetime" ) ) {
+                    res.mCmd = CMD_DATETIME;
+                }
+                else if( cmd.equals( "schedule" ) ) {
+                    res.mCmd = CMD_SCHEDULE;
+                    res.mInfo1 = json.getInt( "timemask" );
+                }
                 else if( cmd.equals( "connect" ) ) {
                     res.mCmd = CMD_CONNECT;
                 }
@@ -433,7 +501,7 @@ public class MainActivity extends AppCompatActivity {
                 return null;
             }
 
-            Log.d( LOG, "response cmd : " + res.mCmd + ", seq : " + res.mSeq + ", result : " + res.mResult + " / res : " + mRes );
+//            Log.d( LOG, "response cmd : " + res.mCmd + ", seq : " + res.mSeq + ", result : " + res.mResult + " / res : " + mRes );
             if( mRes != res.mSeq ) {
                 return null;
             }

@@ -1,6 +1,10 @@
+//
 #include <SoftwareSerial.h>
 #include <ArduinoJson.h>
 #include <QueueList.h>
+//
+#include <MsTimer2.h>
+#include <TimeLib.h>
 
 ///////////////////////////////////////////////////////////////////
 // common
@@ -100,6 +104,87 @@ public:
 SerialCommand gCmd;
 
 ///////////////////////////////////////////////////////////////////
+// Schedule
+///////////////////////////////////////////////////////////////////
+class Schedule
+{
+protected:
+
+  unsigned long m_ulStart;
+  unsigned long m_ulTime;
+
+public:
+
+  Schedule()
+    : m_ulStart( 0 ), m_ulTime( 0 )
+  {}
+
+  void set( String st )
+  {
+    int y = st.substring(  0,  4 ).toInt();
+    int m = st.substring(  4,  6 ).toInt();
+    int d = st.substring(  6,  8 ).toInt();
+    int h = st.substring(  8, 10 ).toInt();
+    int n = st.substring( 10, 12 ).toInt();
+    int s = st.substring( 12, 14 ).toInt();
+
+    setTime( h, n, s, d, m, y );
+    m_ulStart = millis();
+  }
+
+  void setSchTime( unsigned long mask )
+  {
+    m_ulTime = mask;
+
+    for( int i = 0; i < 32; i++ ) {
+      if( m_ulTime & ( (unsigned long)1 << i ) ) {
+        Serial.println( "ON : " + (String)i );
+      }
+    }
+  }
+  
+  unsigned long getSchTime() {
+    return m_ulTime;
+  }
+
+  void checkTime()
+  {
+    if( m_ulStart == 0 ) { return; }
+
+    // time mask check
+    if( m_ulTime > 0 ) {
+      int h = hour();
+      
+      int v = LOW;
+      if( m_ulTime & ( (unsigned long)1 << h ) ) { v = HIGH; }
+
+      Serial.println( "check : " + (String)h + ", " + v );
+
+      int s = digitalRead( PIN_SWITCH );
+      if( s != v ) {
+        digitalWrite( PIN_SWITCH, v );
+        Serial.println( "change switch : " + (String)v );
+      }
+    }
+  }
+};
+
+Schedule gSch;
+
+///////////////////////////////////////////////////////////////////
+// 
+///////////////////////////////////////////////////////////////////
+
+void checkTime()
+{
+  gSch.checkTime();
+}
+
+void interruptProcess()
+{
+  digitalWrite( PIN_SWITCH, HIGH );
+}
+///////////////////////////////////////////////////////////////////
 // 
 ///////////////////////////////////////////////////////////////////
 
@@ -110,6 +195,16 @@ void setup() {
   //
   pinMode( PIN_SWITCH, OUTPUT );
   digitalWrite( PIN_SWITCH, HIGH );
+
+  //
+  attachInterrupt( digitalPinToInterrupt( 2 ), interruptProcess, RISING );
+
+  //
+  gSch.setSchTime( (long)1 << 17 );
+  
+  //
+  MsTimer2::set( 1000, checkTime );
+  MsTimer2::start();
 }
 
 void loop() {
@@ -117,6 +212,8 @@ void loop() {
   if( jo != NULL ) {
     const char* str = (*jo)["cmd"];
     String cmd( str );
+    int result = 0;
+    
     Serial.println( cmd );
 
     if( cmd.compareTo( "state" ) == 0 ) {
@@ -129,7 +226,16 @@ void loop() {
       else { state = LOW; }
       digitalWrite( PIN_SWITCH, state );
     }
+    else if( cmd.compareTo( "schedule" ) == 0 ) {
+      long mask = (*jo)["timemask"];
+      if( mask >= 0 ) { gSch.setSchTime( mask ); }
+      else { (*jo)["timemask"] = gSch.getSchTime(); }
+    }
+    else if( cmd.compareTo( "datetime" ) == 0 ) {
+      String s = (*jo)["datetime"];
+      gSch.set( s );
+    }
     
-    gCmd.release( jo, 0 );
+    gCmd.release( jo, result );
   }
 }
